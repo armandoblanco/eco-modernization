@@ -8,7 +8,7 @@ Este documento explica carpeta por carpeta qué contiene el repo y cuándo se us
 
 ```
 legacy-modernization-playbook/
-├── README.md                            Portada del repo
+├── README.md                            Guía de uso paso a paso (prompts)
 ├── .copilot-project.yml                Contexto del proyecto (opcional; los agentes lo completan)
 ├── .github/                             Agentes, prompts e instructions de Copilot
 ├── docs/                                Metodología, guías, tecnologías

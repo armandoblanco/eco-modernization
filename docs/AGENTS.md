@@ -304,7 +304,7 @@ Cada agente declara su modelo recomendado en el frontmatter. Puedes override en 
 
 Además de los agentes, hay prompts reusables en `.github/prompts/` que se invocan con `/` en Copilot Chat:
 
-Todos están en [`.github/prompts/`](../.github/prompts/) (sin subcarpetas). Guía de uso: [`PROMPTS.md`](../PROMPTS.md).
+Todos están en [`.github/prompts/`](../.github/prompts/) (sin subcarpetas). Guía de uso: [`README.md`](../README.md).
 
 - **VB:** `/vb-analizar-feature`, `/vb-generar-adr`, `/vb-migrar-modulo`, `/vb-validar-paridad`
 - **.NET Framework:** `/dotnet-analizar-proyecto`, `/dotnet-generar-adr`, `/dotnet-migrar-proyecto`, `/dotnet-validar-paridad`

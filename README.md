@@ -1,178 +1,192 @@
-# Legacy Modernization Playbook — .NET Framework y Visual Basic
+# Guía de uso: modernizar un sistema .NET Framework o VB con Copilot
 
-**Modernización de sistemas legacy .NET Framework y VB6 / VB.NET con GitHub Copilot**, con agentes que cubren el ciclo completo (assessment → planning → migración → cloud en Azure) y **evidencia verificable de cobertura 100% y de migración de reglas de negocio**. Diseñado para **Windows + PowerShell**.
-
-Construido a partir de migraciones reales en banca, gobierno y telco en LATAM.
-
----
-
-## Qué resuelve
-
-En sistemas muy grandes, un agente de IA no cabe todo el código en contexto: resume, salta archivos o lee solo parte de cada uno, y aun así reporta "análisis completo". Las reglas de negocio de lo no leído se pierden.
-
-Este playbook mueve la garantía **del LLM a las herramientas**:
-
-| Problema | Mecanismo (skill [`legacy-coverage`](.github/skills/legacy-coverage/SKILL.md), PowerShell en `.github/skills/legacy-coverage/scripts/`) |
-| --- | --- |
-| No se sabe qué archivos existen | `Initialize-Ledger.ps1`: inventario de **todos** los archivos (líneas, bytes, SHA-256) |
-| El agente lee "por encima" | `Read-LegacyChunk.ps1`: único modo de leer; **registra cada línea leída** (`read-log.tsv`) |
-| El contexto se agota en apps grandes | Batches (un **subagente** por batch) + `Get-NextBatch.ps1` para **reanudar** |
-| "Ya terminé" sin evidencia | `Test-Coverage.ps1`: gate 100% (líneas leídas, archivo → feature → disposición) |
-| Reglas de negocio implícitas se pierden | `Find-RuleCandidates.ps1` (escáner determinista) + `Add-BusinessRule.ps1` → `BR-catalog.csv` |
-| Se migra código pero no la regla | `Test-RuleTraceability.ps1`: regla → código (`BR-NNNN`) → pruebas pasando (TRX); críticas ≥2 |
-
-Protocolos: [`coverage-protocol`](.github/skills/legacy-coverage/references/coverage-protocol.md) · [`business-rules-protocol`](.github/skills/legacy-coverage/references/business-rules-protocol.md) · Scripts: [`scripts/README.md`](scripts/README.md)
-
-> **Límite honesto:** los gates prueban que cada línea **pasó por el lector** y que cada regla **tiene código y pruebas**; no que el modelo la *entendió* perfectamente. Se complementan con el escáner determinista, los checkpoints HITL y las pruebas de paridad.
-
----
-
-## Caso real
-
-Migración de un sistema VB6 de gestión de RRHH a WPF + .NET 10 siguiendo el playbook:
-
-| Métrica | Resultado |
-| --- | --- |
-| Features migrados | 15 / 15 |
-| Tests | **146 / 146 passed** (78 Domain + 24 Application + 44 Parity) |
-| Build final | **0 errors, 0 warnings** |
-| ADRs documentados | 9 |
-| Arquitectura | Clean Architecture (Domain + Application + Infrastructure + WPF) |
-
----
-
-## Metodología en cinco fases
-
-```mermaid
-flowchart LR
-    F0["<b>Fase 0</b><br/>Business Case<br/><i>¿conviene?</i>"]:::opt
-    F1["<b>Fase 1</b><br/>Assessment<br/><i>¿qué hay?</i>"]:::req
-    F2["<b>Fase 2</b><br/>Planning<br/><i>¿hacia dónde?</i>"]:::req
-    F3["<b>Fase 3</b><br/>Migration<br/><i>construir</i>"]:::req
-    F4["<b>Fase 4</b><br/>Cloud Deploy<br/><i>¿dónde corre?</i>"]:::opt
-
-    F0 --> F1 --> F2 --> F3 --> F4
-
-    classDef req fill:#1e6091,stroke:#073b4c,color:#fff
-    classDef opt fill:#6c757d,stroke:#495057,color:#fff
-```
-
-Fases 1, 2 y 3 son requeridas. Fase 0 y 4 son opcionales pero recomendadas con cliente.
-
-| Fase | Pregunta | Agente | Entregable / gate |
-| --- | --- | --- | --- |
-| 0. Business Case _(opc.)_ | ¿Vale la pena? | `@business-case-analyst` | TCO, ROI, riesgo, ejecutivo |
-| 0. Security _(opc.)_ | ¿Qué riesgos hay? | `@security-assessor` | Reporte whitehat del legacy |
-| **1. Assessment** | ¿Qué tiene el legacy? | `@dotnet-assessment` / `@vb-assessment` | `docs/features/`, ledger, `BR-catalog.csv` · **gates: cobertura 100% + reglas** |
-| **2. Planning** | ¿A qué stack y por qué? | `@dotnet-planning` / `@vb-planning` | `docs/ARQUITECTURA-TARGET.md` + ADRs |
-| **3. Migration** | ¿Cómo construirlo? | `@dotnet-migration` / `@vb-migration` | `src/` + `tests/` · **gate: trazabilidad regla → código → prueba** |
-| 4. Cloud Deploy _(opc.)_ | ¿Dónde corre? | `@azure-architect` | `cloud-architectures/azure/` con IaC + precios |
-
-Apoyo: `@modernization-strategy` (6 R's), `@plan-refiner`, `@migration-tester` (paridad).
-Detalle: [`docs/methodology/00-overview.md`](docs/methodology/00-overview.md)
-
----
-
-## Requisitos (Windows)
-
-- Windows 10/11, **VS Code** + GitHub Copilot Chat
-- **PowerShell 7** (`winget install Microsoft.PowerShell`); los scripts de cobertura también corren en Windows PowerShell 5.1
-- **.NET 10 SDK** — `winget install Microsoft.DotNet.SDK.10`
-- `git`; el código legacy completo (no solo binarios)
-
----
-
-## Flujo end-to-end
-
-### 1. Clonar (sin instalación ni configuración)
-
-```powershell
-git clone https://github.com/armandoblanco/legacy-modernization-playbook.git mi-proyecto
-cd mi-proyecto
-Remove-Item .git -Recurse -Force; git init
-```
-
-El repo ya viene listo para **.NET Framework** (`@dotnet-*`) y **VB6/VB.NET** (`@vb-*`): usa los agentes de tu tecnología y ignora los otros. Opcional: llena `.copilot-project.yml` (nombre, cliente, stack, cloud); lo que falte lo preguntan los agentes.
-
-### 2. Cargar el legacy (read-only)
-
-```powershell
-Copy-Item C:\ruta\al\codigo\* legacy\ -Recurse
-```
-
-Copia **todo** (`.frm/.frx/.vbp`, `.config`, `.sql`, `.rpt`…): el gate exige leer cada archivo.
-
-### 3. Fase 1 — Assessment con cobertura verificable
+Guía paso a paso para ejecutar una modernización en **tres etapas**: Assessment, Planning y Migration. Todo corre en **Windows** con **PowerShell 7**.
 
 ```text
-@vb-assessment Analiza el sistema en legacy/        (o @dotnet-assessment)
+Preparación  ->  1. Assessment  ->  2. Planning  ->  3. Migration
+(clonar + legacy/) ¿qué hay?          ¿hacia dónde?     construir
 ```
 
-El agente inicializa el ledger, trabaja por batches con subagentes, lee con `Read-LegacyChunk.ps1`, cataloga reglas de negocio y no cierra hasta que ambos gates dan exit 0:
+**Regla de oro:** no pases a la siguiente etapa hasta que el *gate* de la actual termine con **exit 0**. Los gates son scripts, no opiniones del modelo.
 
-```powershell
-pwsh .github/skills/legacy-coverage/scripts/Test-Coverage.ps1 -Phase Assessment
-pwsh .github/skills/legacy-coverage/scripts/Test-RuleTraceability.ps1 -Phase Assessment -Strict
-```
-
-Si se agota el contexto o se interrumpe: `pwsh .github/skills/legacy-coverage/scripts/Get-NextBatch.ps1 -Summary` y `@vb-assessment Continúa` (el estado vive en `docs/inventory/`).
-
-### 4. Fase 2 — Planning
-
-```text
-@vb-planning Revisa el assessment y planifica la migración
-```
-
-Pregunta las decisiones críticas (stack, reemplazo de OCX/WCF/WebForms, ORM, MVVM…) y produce `ARQUITECTURA-TARGET.md`, `migration-plan.md` y un ADR por decisión.
-
-### 5. Fase 3 — Migration
-
-```text
-@vb-migration Ejecuta la migración del sistema legacy
-```
-
-Feature por feature, con compile-and-test entre capas. Cada regla de negocio queda marcada en el código (`BR-NNNN`) y con pruebas cuyo nombre incluye el ID:
-
-```powershell
-dotnet test --logger trx --results-directory test-results
-pwsh .github/skills/legacy-coverage/scripts/Test-RuleTraceability.ps1 -Phase Migration
-pwsh .github/skills/legacy-coverage/scripts/Test-Coverage.ps1 -Phase Migration
-```
-
-Estructura generada: `<Proyecto>.Migrated.sln`, `src/`, `tests/`, `test-results/`, `migration/`.
-
-### 6. Fase 4 (opcional) — Azure
-
-```text
-@azure-architect Diseña la arquitectura cloud para MiProyecto en Azure
-```
+**Agente vs prompt:** el **agente** (`@nombre`) ejecuta una etapa completa. El **prompt** (`/nombre`) es un atajo para una tarea puntual o una verificación.
 
 ---
 
-## Tecnologías soportadas
+## 0. Preparación
 
-| Tecnología | Agentes | Guía |
-| --- | --- | --- |
-| **.NET Framework 2.0–4.8** → .NET 10 | `@dotnet-assessment` · `@dotnet-planning` · `@dotnet-migration` | [`docs/QUICKSTART-dotnet.md`](docs/QUICKSTART-dotnet.md) |
-| **VB6 y VB.NET legacy** → .NET 10 (WinForms / WPF / Blazor) | `@vb-assessment` · `@vb-planning` · `@vb-migration` | [`docs/technologies/vb/`](docs/technologies/vb/README.md) |
+El repo **ya viene listo** para .NET Framework y para VB; no hay script de instalación ni configuración.
 
-Compartidos: `@business-case-analyst`, `@security-assessor`, `@modernization-strategy`, `@plan-refiner`, `@migration-tester`, `@cloud-architect`, `@azure-architect`. Prompts reutilizables en `.github/prompts/` (p. ej. `verificar-cobertura`, `verificar-reglas-negocio`, `reanudar-sesion`).
+### Requisitos
+- Windows 10/11, **PowerShell 7** (`pwsh`), Git y **.NET SDK 8 o 9**.
+- **VS Code** con **GitHub Copilot Chat** (modo agente habilitado).
+
+### Pasos
+1. Clona este repositorio como base del proyecto del cliente:
+   ```powershell
+   git clone https://github.com/armandoblanco/legacy-modernization-playbook.git mi-proyecto
+   cd mi-proyecto
+   Remove-Item .git -Recurse -Force; git init
+   ```
+2. Elige tu familia de agentes (no necesitas desactivar la otra):
+
+   | Tu sistema legacy | Agentes | Prompts |
+   |---|---|---|
+   | **.NET Framework** (2.0 a 4.8) | `@dotnet-assessment`, `@dotnet-planning`, `@dotnet-migration` | `/dotnet-...` |
+   | **VB6 o VB.NET** | `@vb-assessment`, `@vb-planning`, `@vb-migration` | `/vb-...` |
+
+3. Copia **todo** el código legacy del cliente en `legacy/` (código, proyectos, configs, scripts SQL, recursos). Lo que no esté aquí no se migrará. Borra `legacy/LEEME-PLANTILLA.md` (no es parte del inventario).
+   ```powershell
+   Copy-Item C:\ruta\al\sistema\* legacy\ -Recurse
+   ```
+4. (Opcional) Llena `.copilot-project.yml`: nombre del proyecto, cliente, `legacy_lang` (`vb6` | `vbnet`) y stack/cloud si ya los conoces. Lo que dejes vacío, el agente te lo pregunta y lo escribe.
+5. Abre la carpeta en VS Code y abre Copilot Chat en modo **Agent**. Escribe `@` para confirmar que ves los agentes y `/` para ver los prompts.
 
 ---
 
-## Documentación
+## 1. Assessment: entender qué hay (100% del código leído)
 
-- [`docs/AGENTS.md`](docs/AGENTS.md): catálogo de agentes con prompts de ejemplo
-- [`docs/PROJECT-STRUCTURE.md`](docs/PROJECT-STRUCTURE.md): estructura del repo
-- [`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md): filosofía y lecciones aprendidas
-- [`docs/methodology/00-overview.md`](docs/methodology/00-overview.md): metodología de las 5 fases
-- [`.github/skills/legacy-coverage/references/`](.github/skills/legacy-coverage/references/): protocolos de cobertura y reglas de negocio
-- [`scripts/README.md`](scripts/README.md): herramientas PowerShell
+**Objetivo:** inventariar cada archivo de `legacy/`, leer cada línea y extraer las reglas de negocio (`BR-####`).
 
-## Contribuir
+### Pasos
+1. Lanza el agente según tu tecnología:
+   ```text
+   @dotnet-assessment Analiza el sistema en legacy/
+   ```
+   ```text
+   @vb-assessment Analiza el sistema en legacy/
+   ```
+2. El agente crea el inventario (`docs/inventory/coverage-ledger.csv`), lo lee en batches con subagentes y escribe un documento por feature en `docs/features/`, el catálogo `docs/business-rules/BR-catalog.csv` y `docs/SUMMARY.md`.
+3. **Si el contexto se agota o la sesión se corta, no reinicies**; el avance está en disco:
+   ```text
+   /reanudar-sesion
+   ```
+4. Si quieres profundizar en una pieza concreta:
+   - .NET: `/dotnet-analizar-proyecto` (un `.csproj`).
+   - VB: `/vb-analizar-feature` (un módulo).
+5. Cuando el agente diga que terminó, **verifica los gates**:
+   ```text
+   /verificar-cobertura
+   /verificar-reglas-negocio
+   ```
+   Equivalen a:
+   ```powershell
+   pwsh .github/skills/legacy-coverage/scripts/Test-Coverage.ps1 -Phase Assessment
+   pwsh .github/skills/legacy-coverage/scripts/Test-RuleTraceability.ps1 -Phase Assessment -Strict
+   ```
+6. Si algún gate falla, ejecuta `/reanudar-sesion` y repite hasta exit 0.
 
-Casos reales, trampas técnicas no documentadas y mejoras a los scripts son bienvenidos vía issue o PR.
+### Revisión humana (antes de avanzar)
+- Los top bloqueantes del `docs/SUMMARY.md` tienen sentido.
+- Las agrupaciones por feature coinciden con cómo el negocio ve el sistema.
+- Las reglas críticas tienen la evidencia `archivo:líneas` correcta.
 
-## Licencia
+**Salida:** `docs/` completo, ledger sin líneas pendientes y catálogo de reglas con evidencia. **Gate:** ambos scripts en exit 0.
 
-MIT: usa libremente, atribuye si quieres.
+---
+
+## 2. Planning: decidir hacia dónde
+
+**Objetivo:** convertir el assessment en decisiones formales (ADRs), arquitectura destino y un plan de migración ordenado. **Aquí no se genera código.**
+
+### Pasos
+1. Lanza el agente de planning:
+   ```text
+   @dotnet-planning Genera la arquitectura target, los ADRs y el plan de migración
+   ```
+   ```text
+   @vb-planning Genera la arquitectura target, los ADRs y el plan de migración
+   ```
+2. Responde sus preguntas (restricciones, plazos, stack, preferencias). Si no sabes algo, dilo; el agente documenta el supuesto en un ADR.
+3. (Opcional, recomendado) Pide una segunda opinión sobre el enfoque y el plan:
+   ```text
+   @modernization-strategy Evalúa el patrón de modernización recomendado
+   @plan-refiner Revisa y refina el plan
+   ```
+4. Para agregar una decisión puntual: `/dotnet-generar-adr` (.NET) o `/vb-generar-adr` (VB).
+5. **Revisa y aprueba** cada ADR y el plan. Confirma que cada feature lista sus reglas `BR-####` y su criterio de salida.
+
+### Entregables
+| | .NET Framework | VB |
+|---|---|---|
+| Arquitectura | `docs/ARQUITECTURA-TARGET.md` | `docs/ARQUITECTURA-TARGET.md` |
+| Decisiones | `docs/adr/` | `docs/adr/` |
+| Plan | `migration/{scenarioId}/plan.md` | `docs/migration-plan.md` |
+
+**Gate:** ADRs y plan **aprobados por una persona**. Sin esto no empieza la migración.
+
+---
+
+## 3. Migration: construir
+
+**Objetivo:** migrar feature por feature a .NET 10 en `src/` y `tests/`, con una prueba por cada regla de negocio.
+
+### Pasos
+1. Lanza el agente de migración:
+   ```text
+   @dotnet-migration Ejecuta el plan de migración
+   ```
+   ```text
+   @vb-migration Ejecuta el plan de migración
+   ```
+   El agente migra en el orden del plan, compila (`dotnet build`) y prueba (`dotnet test`) tras cada tarea.
+2. Para migrar una pieza específica en vez de todo el plan:
+   - .NET: `/dotnet-migrar-proyecto`
+   - VB: `/vb-migrar-modulo`
+3. Valida que el código migrado se comporta igual que el legacy:
+   `/dotnet-validar-paridad` (.NET) o `/vb-validar-paridad` (VB), o pide al agente de pruebas: `@migration-tester Verifica la paridad de <feature>`.
+4. Si se corta la sesión: `/reanudar-sesion` (retoma la primera tarea pendiente).
+5. Al terminar cada feature y al final, corre las pruebas y los gates:
+   ```powershell
+   dotnet test --logger trx --results-directory test-results
+   ```
+   ```text
+   /verificar-reglas-negocio
+   /verificar-cobertura
+   ```
+   Equivalen a:
+   ```powershell
+   pwsh .github/skills/legacy-coverage/scripts/Test-RuleTraceability.ps1 -Phase Migration -Strict
+   pwsh .github/skills/legacy-coverage/scripts/Test-Coverage.ps1 -Phase Migration
+   ```
+   (En los dos prompts, elige la fase **Migration** cuando te la pidan.)
+
+### Qué validan los gates
+- **Cada regla `BR-####`** está implementada en código que cita su ID y tiene pruebas pasando (≥2 si es crítica).
+- **Cada archivo legacy** terminó con una disposición explícita: `Migrated`, `ReplacedByFramework`, `DeadCode` o `NotMigrated` (este último con justificación aprobada).
+
+**Salida:** solución `<Proyecto>.Migrated.sln` compilando, `test-results/` con TRX verde y ambos gates en exit 0.
+
+---
+
+## Resumen: qué ejecutar y en qué orden
+
+| # | Etapa | Escribe en el chat | Verifica |
+|---|---|---|---|
+| 0 | Preparación | Clona el repo y copia el código a `legacy/` | `legacy/` con todo el código |
+| 1 | Assessment | `@dotnet-assessment` o `@vb-assessment` (+ `/reanudar-sesion` si se corta) | `/verificar-cobertura` y `/verificar-reglas-negocio` en exit 0 |
+| 2 | Planning | `@dotnet-planning` o `@vb-planning` (+ `/dotnet-generar-adr` o `/vb-generar-adr`) | ADRs y plan aprobados por una persona |
+| 3 | Migration | `@dotnet-migration` o `@vb-migration` (+ `/dotnet-validar-paridad` o `/vb-validar-paridad`) | `dotnet test` verde y gates en exit 0 |
+
+## Referencia de prompts
+
+| Prompt | Etapa | Uso |
+|---|---|---|
+| `/dotnet-analizar-proyecto` | 1 (.NET) | Perfil de un `.csproj` concreto |
+| `/vb-analizar-feature` | 1 (VB) | Analiza un módulo y genera su `docs/features/<feature>.md` |
+| `/verificar-cobertura` | 1 y 3 | Corre `Get-NextBatch -Summary` y `Test-Coverage` |
+| `/verificar-reglas-negocio` | 1 y 3 | Corre `Find-RuleCandidates` y `Test-RuleTraceability -Strict` |
+| `/reanudar-sesion` | 1 y 3 | Retoma desde el estado en disco |
+| `/dotnet-generar-adr`, `/vb-generar-adr` | 2 | Crea un ADR en `docs/adr/` |
+| `/dotnet-migrar-proyecto` | 3 (.NET) | Migra un proyecto o feature |
+| `/vb-migrar-modulo` | 3 (VB) | Migra un módulo |
+| `/dotnet-validar-paridad`, `/vb-validar-paridad` | 3 | Pruebas de paridad legacy vs migrado |
+
+## Problemas frecuentes
+
+- **No aparecen `@agentes` o `/prompts`:** abre la carpeta raíz del repo (la que contiene `.github/`) y verifica que Copilot Chat esté en modo Agent. Recarga la ventana de VS Code.
+- **El gate falla con líneas o reglas pendientes:** es el comportamiento esperado; ejecuta `/reanudar-sesion` y no edites a mano `coverage-ledger.csv` ni `read-log.tsv`.
+- **Se llenó el chat:** abre uno nuevo y usa `/reanudar-sesion`. El estado no vive en la conversación.
+- **`pwsh` no se reconoce:** instala PowerShell 7 (`winget install Microsoft.PowerShell`).
+
+Detalle técnico: [`.github/skills/legacy-coverage/references/coverage-protocol.md`](.github/skills/legacy-coverage/references/coverage-protocol.md), [`.github/skills/legacy-coverage/references/business-rules-protocol.md`](.github/skills/legacy-coverage/references/business-rules-protocol.md) y [`scripts/README.md`](scripts/README.md).
