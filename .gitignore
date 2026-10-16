@@ -1,0 +1,9 @@
+.DS_Store
+
+# Artefactos de build
+bin/
+obj/
+*.user
+.vs/
+test-results/
+TestResults/

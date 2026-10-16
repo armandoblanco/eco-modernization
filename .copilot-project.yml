@@ -1,0 +1,23 @@
+# Contexto del proyecto. Los agentes leen este archivo.
+# Si un campo está vacío, el agente te lo pregunta y lo escribe aquí.
+# Puedes llenarlo a mano antes de empezar para evitar preguntas.
+project:
+  name: ""            # PascalCase; se usa en namespaces y carpetas (ej. MiApp)
+  client: ""          # Nombre del cliente (ADRs y documentación)
+  legacy_lang: ""     # VB: vb6 | vbnet. Para .NET Framework déjalo vacío
+  target_stack: ""    # VB: winforms | wpf | blazor. .NET: lo decide @dotnet-planning (siempre sobre .NET 10)
+  target_framework: net10.0   # FIJO: el destino de toda migración es .NET 10 (LTS). No cambiar.
+  cloud_provider: ""  # azure | on-premise | undecided
+
+coverage:
+  batch_lines: 2500        # líneas por batch (un subagente por batch)
+  require_100_percent: true
+
+paths:
+  legacy: legacy/
+  modern: src/
+  tests: tests/
+  docs: docs/
+  assessment: assessment/
+  migration: migration/
+  cloud: cloud-architectures/
